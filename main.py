@@ -12,10 +12,10 @@ model = YOLO("yolo11s.pt")
 names = model.model.names
 
 # Open your video source (file or webcam)
-source = 'C:\Users\ethomas308\Documents\GitHub\SportInjuryDetector/trip12fps.mp4'
-video = cv2.VideoCapture(source)
+#source = 'C:/Users/ethomas308/Documents.GitHub.SportInjuryDetector/trip12fps.mp4'
+#video = cv2.VideoCapture(source)
 
-#video = cv2.VideoCapture(0) # Webcam
+video = cv2.VideoCapture(0) # Webcam
 
 #Event Log Initialization
 global event_log
@@ -38,6 +38,7 @@ def generate_frames():
     #event_log = list()
 
     while True:
+        print("Starting frame generation")
         ret, frame = video.read()
         if not ret:
             break  # End of stream
@@ -118,6 +119,16 @@ def index():
     <html>
     <head>
         <title>Live Sports Injury Detector</title>
+        <style>
+            .container {
+                display: flex;
+                justify-content: space-between;
+            }
+            .container > div {
+                flex: 1;
+                margin: 10px;
+            }
+        </style>
         <script>
             function fetchEventLog() {
                 fetch('/event_log')
@@ -163,13 +174,16 @@ def index():
         <h1>Live Sports Injury Detector</h1>
         <p>Real-time detection of falls and collisions in sports</p>
         
-        <div id=video-feed>
-            <h2>Video Stream</h2>
-            <img src="{{ url_for('video_feed') }}" style="width:1020px; height:auto;">
-        </div>
-        
-        <div id="player-roster>
-            <h2>Player Roster</h2>
+        <div class="container">
+            <div id="video-feed">
+                <h2>Video Stream</h2>
+                <img src="{{ url_for('video_feed') }}" style="width:40vw; height:auto;">
+            </div>
+            
+            <div id="player-roster">
+                <h2>Player Roster</h2>
+                <p>Demo player roster goes here</p>
+            </div>
         </div>
         
         <h2>Event Log</h2>
@@ -185,8 +199,6 @@ def index():
             <h3>Device Sync</h3>
             <button onclick="TODO()">Manual Android Sync</button>      
         </div>
-                        
-
     </body>
     </html>
     ''')
