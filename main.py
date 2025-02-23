@@ -1,9 +1,10 @@
 import cv2
 import cvzone
 import numpy as np
-from flask import Flask, Response, render_template_string
+from flask import Flask, Response, render_template_string, send_from_directory, jsonify
 from ultralytics import YOLO
 import time
+import os
 
 app = Flask(__name__)
 
@@ -12,31 +13,36 @@ model = YOLO("yolo11s.pt")
 names = model.model.names
 
 # Open your video source (file or webcam)
-#source = 'C:/Users/ethomas308/Documents.GitHub.SportInjuryDetector/trip12fps.mp4'
-#video = cv2.VideoCapture(source)
+video_source = 'static/input_videos/trip12fps.mp4'
+video = cv2.VideoCapture(0)
 
-video = cv2.VideoCapture(0) # Webcam
-
-#Event Log Initialization
+# Event Log Initialization
 global event_log
 event_log = list()
 
+# Directory to save player images
+PLAYER_IMAGES_DIR = 'static/player_images'
+if not os.path.exists(PLAYER_IMAGES_DIR):
+    os.makedirs(PLAYER_IMAGES_DIR)
 
 def log_event(player_id, event_time, event_type):
-    if (event_type == "Bump"):
+    if event_type == "Bump":
         player1 = player_id[0]
         player2 = player_id[1]
-        event_log.append(f"{event_type} detected between player {player1} and player {player2} at {event_time}")
-    #fall_message = f"Fall detected for player {player_id} at {fall_time}"
-    #event_log.append(fall_message)
-                    
-    event_log.append(f"{event_type} detected for player {player_id} at {event_time}")
-    #update log event to include an image
+        msg = (f"{event_type} detected between player {player1} and player {player2} at {event_time}")
+    else:
+        msg = (f"{event_type} detected for player {player_id} at {event_time}")
+
+    if len(event_log) > 0:
+        last_events = event_log[-3:]
+        for event in last_events:
+            if msg[:30] in event:
+                return
+    event_log.append(msg)
 
 def generate_frames():
-    
-    #event_log = list()
-
+    numPlayers = 0
+    detected_players = set()
     while True:
         print("Starting frame generation")
         ret, frame = video.read()
@@ -44,7 +50,7 @@ def generate_frames():
             break  # End of stream
 
         # Resize and process frame
-        frame = cv2.resize(frame, (300, 200))
+        frame = cv2.resize(frame, (800, 400))
         results = model.track(frame, persist=True, classes=0)
 
         if results[0].boxes is not None and results[0].boxes.id is not None:
@@ -55,21 +61,41 @@ def generate_frames():
             track_ids = results[0].boxes.id.int().cpu().tolist()      # Track IDs
             confidences = results[0].boxes.conf.cpu().tolist()        # Confidence scores
 
+            # Save player images for all detected players
+            for box, player_id in zip(boxes, track_ids):
+                if player_id not in detected_players:
+                    detected_players.add(player_id)
+                    x1, y1, x2, y2 = box
+                    w = x2 - x1
+                    h = y2 - y1
+                    size = max(w, h)
+                    cx, cy = x1 + w // 2, y1 + h // 2
+                    x1 = max(0, cx - size // 2)
+                    y1 = max(0, cy - size // 2)
+                    x2 = min(frame.shape[1], cx + size // 2)
+                    y2 = min(frame.shape[0], cy + size // 2)
+                    player_image = frame[y1:y2, x1:x2]
+                    player_image = cv2.resize(player_image, (100, 100))  # Resize to 100x100 for consistency
+                    
+                    # Add label to the image
+                    label = f'Player {player_id}'
+                    cv2.putText(player_image, label, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+                    player_image_path = os.path.join(PLAYER_IMAGES_DIR, f'player_{player_id}_{time.time()}.jpg')
+                    cv2.imwrite(player_image_path, player_image)
+
             # Process each detection
             for box, class_id, player_id, conf in zip(boxes, class_ids, track_ids, confidences):
                 x1, y1, x2, y2 = box
                 h = y2 - y1
                 w = x2 - x1
-                diff = h - w
+                diff = (1.5*h) - w
                 if diff <= 0:
                     fall_time = time.strftime("%H:%M:%S", time.localtime())
-                    
-                    log_event(player_id, fall_time, "Fall") 
+                    log_event(player_id, fall_time, "Fall")
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     cvzone.putTextRect(frame, f'{player_id}', (x1, y2), scale=1, thickness=1)
                     cvzone.putTextRect(frame, "Fall", (x1, y1), scale=1, thickness=1)
-                    
-                    
                 else:
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cvzone.putTextRect(frame, f'{player_id}', (x1, y2), scale=1, thickness=1)
@@ -89,7 +115,6 @@ def generate_frames():
                     cvzone.putTextRect(frame, "Bump", (x1, y1), scale=1, thickness=1)
                     cvzone.putTextRect(frame, "Bump", (x3, y3), scale=1, thickness=1)
 
-                    
         # Encode frame as JPEG
         ret, buffer = cv2.imencode('.jpg', frame)
         if not ret:
@@ -107,10 +132,46 @@ def video_feed():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
-#share event log with the front end
+@app.route('/player_images/<filename>')
+def player_images(filename):
+    return send_from_directory(PLAYER_IMAGES_DIR, filename)
+
+# Route to restart the video feed
+@app.route('/restart_video_feed', methods=['POST'])
+def restart_video_feed():
+    global video
+    video.release()
+    video = cv2.VideoCapture(video_source)
+    event_log.clear()
+
+    # Clear player roster images
+    for filename in os.listdir(PLAYER_IMAGES_DIR):
+        file_path = os.path.join(PLAYER_IMAGES_DIR, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+    return jsonify({"status": "Video feed restarted"})
+
+# Route to switch to webcam feed
+@app.route('/webcam_feed', methods=['POST'])
+def webcam_feed():
+    global video
+    video.release()
+    video = cv2.VideoCapture(0)
+    event_log.clear()
+
+    # Clear player roster images
+    for filename in os.listdir(PLAYER_IMAGES_DIR):
+        file_path = os.path.join(PLAYER_IMAGES_DIR, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+    return jsonify({"status": "Webcam feed started"})
+
+# Share event log with the front end
 @app.route('/event_log')
 def get_event_log():
-    return {'events': event_log}
+    return {'events': event_log, 'player_images': os.listdir(PLAYER_IMAGES_DIR)}
 
 # Simple page to display the video stream
 @app.route('/')
@@ -118,7 +179,8 @@ def index():
     return render_template_string('''
     <html>
     <head>
-        <title>Live Sports Injury Detector</title>
+        <title>SportsGuard</title>
+        <link rel="stylesheet" href="static/skeleton.css">
         <style>
             .container {
                 display: flex;
@@ -127,6 +189,10 @@ def index():
             .container > div {
                 flex: 1;
                 margin: 10px;
+            }
+            #player-images {
+                max-height: 50vh;
+                overflow-y: auto;
             }
         </style>
         <script>
@@ -141,6 +207,34 @@ def index():
                             eventElement.textContent = event;
                             eventLogDiv.appendChild(eventElement);
                         });
+
+                        const playerRosterDiv = document.getElementById('player-images');
+                        playerRosterDiv.innerHTML = ''; // Clear the player roster div
+                        data.player_images.forEach(image => {
+                            const imgElement = document.createElement('img');
+                            imgElement.src = '/player_images/' + image;
+                            imgElement.style.width = '100px';
+                            imgElement.style.height = 'auto';
+                            playerRosterDiv.appendChild(imgElement);
+                        });
+                    });
+            }
+
+            function restartVideoFeed() {
+                fetch('/restart_video_feed', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log(data.status);
+                        fetchEventLog(); // Refresh the event log and player roster
+                    });
+            }
+
+            function switchToWebcamFeed() {
+                fetch('/webcam_feed', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log(data.status);
+                        fetchEventLog(); // Refresh the event log and player roster
                     });
             }
 
@@ -182,7 +276,10 @@ def index():
             
             <div id="player-roster">
                 <h2>Player Roster</h2>
-                <p>Demo player roster goes here</p>
+                <div id="player-images">
+                
+                </div>
+                
             </div>
         </div>
         
@@ -191,8 +288,8 @@ def index():
 
         <div id="debug-tools">
             <h3>Video Control</h3>
-            <button onclick="TODO()">Restart Demo Video Feed</button>
-            <button onclick="TODO()">Webcam Feed</button> 
+            <button onclick="restartVideoFeed()">Restart Demo Video Feed</button>
+            <button onclick="switchToWebcamFeed()">Webcam Feed</button> 
             <input type="text" placeholder="Enter Video URL">
             <button>Submit</button>
                                   
