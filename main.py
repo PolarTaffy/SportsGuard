@@ -12,15 +12,13 @@ app = Flask(__name__)
 model = YOLO("yolo11s.pt")
 names = model.model.names
 
-# Open your video source (file or webcam)
 video_source = 'static/input_videos/trip12fps.mp4'
 video = cv2.VideoCapture(0)
+#video = cv2.VideoCapture(video_source)
 
-# Event Log Initialization
 global event_log
 event_log = list()
 
-# Directory to save player images
 PLAYER_IMAGES_DIR = 'static/player_images'
 if not os.path.exists(PLAYER_IMAGES_DIR):
     os.makedirs(PLAYER_IMAGES_DIR)
@@ -29,7 +27,7 @@ def log_event(player_id, event_time, event_type):
     if event_type == "Bump":
         player1 = player_id[0]
         player2 = player_id[1]
-        msg = (f"{event_type} detected between player {player1} and player {player2} at {event_time}")
+        msg = (f"{event_type} detected between player {player1} and player {player2} at {event_time}. CONFIDENCE: LOW")
     else:
         msg = (f"{event_type} detected for player {player_id} at {event_time}")
 
@@ -49,7 +47,7 @@ def generate_frames():
         if not ret:
             break  # End of stream
 
-        # Resize and process frame
+        # Resize
         frame = cv2.resize(frame, (800, 400))
         results = model.track(frame, persist=True, classes=0)
 
@@ -61,7 +59,7 @@ def generate_frames():
             track_ids = results[0].boxes.id.int().cpu().tolist()      # Track IDs
             confidences = results[0].boxes.conf.cpu().tolist()        # Confidence scores
 
-            # Save player images for all detected players
+            # Player images
             for box, player_id in zip(boxes, track_ids):
                 if player_id not in detected_players:
                     detected_players.add(player_id)
@@ -75,16 +73,16 @@ def generate_frames():
                     x2 = min(frame.shape[1], cx + size // 2)
                     y2 = min(frame.shape[0], cy + size // 2)
                     player_image = frame[y1:y2, x1:x2]
-                    player_image = cv2.resize(player_image, (100, 100))  # Resize to 100x100 for consistency
+                    player_image = cv2.resize(player_image, (100, 100))  # Resize to 100x100 pics
                     
-                    # Add label to the image
+                    # player id labels
                     label = f'Player {player_id}'
                     cv2.putText(player_image, label, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
                     player_image_path = os.path.join(PLAYER_IMAGES_DIR, f'player_{player_id}_{time.time()}.jpg')
                     cv2.imwrite(player_image_path, player_image)
 
-            # Process each detection
+            # for each person
             for box, class_id, player_id, conf in zip(boxes, class_ids, track_ids, confidences):
                 x1, y1, x2, y2 = box
                 h = y2 - y1
@@ -152,7 +150,7 @@ def restart_video_feed():
 
     return jsonify({"status": "Video feed restarted"})
 
-# Route to switch to webcam feed
+# Switch to webcam (DEFUNCT)
 @app.route('/webcam_feed', methods=['POST'])
 def webcam_feed():
     global video
@@ -265,7 +263,7 @@ def index():
         </script>
     </head>
     <body>
-        <h1>Live Sports Injury Detector</h1>
+        <h1>SportsGuard</h1>
         <p>Real-time detection of falls and collisions in sports</p>
         
         <div class="container">
